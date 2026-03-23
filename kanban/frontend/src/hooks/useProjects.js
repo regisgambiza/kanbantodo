@@ -7,6 +7,16 @@ import {
   fetchProjects,
   updateCard,
   updateProject,
+  fetchTemplates,
+  saveProjectAsTemplate,
+  deleteTemplate,
+  applyTemplate,
+  fetchRecurringTasks,
+  createRecurringTask,
+  updateRecurringTask,
+  deleteRecurringTask,
+  generateRecurringTaskInstance,
+  generateAllRecurringTasks,
 } from '../api/client.js'
 
 const COLUMN_ORDER = ['backlog', 'todo', 'doing', 'done']
@@ -112,6 +122,9 @@ export default function useProjects() {
   const [activeProjectId, setActiveProjectId] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [templates, setTemplates] = useState([])
+  const [recurringTasks, setRecurringTasks] = useState([])
+  const [showTemplates, setShowTemplates] = useState(false)
 
   useEffect(() => {
     let isMounted = true
@@ -395,6 +408,138 @@ export default function useProjects() {
     }
   }, [])
 
+  const loadTemplates = useCallback(async () => {
+    try {
+      const data = await fetchTemplates()
+      setTemplates(data)
+      setError('')
+    } catch (err) {
+      setError(err.message || 'Failed to load templates')
+    }
+  }, [])
+
+  const saveAsTemplate = useCallback(async (projectId, name, description) => {
+    try {
+      const template = await saveProjectAsTemplate(projectId, name, description)
+      setTemplates((prev) => [...prev, template])
+      setError('')
+      return template
+    } catch (err) {
+      setError(err.message || 'Failed to save as template')
+      return null
+    }
+  }, [])
+
+  const removeTemplate = useCallback(async (templateId) => {
+    try {
+      await deleteTemplate(templateId)
+      setTemplates((prev) => prev.filter((t) => t.id !== templateId))
+      setError('')
+      return true
+    } catch (err) {
+      setError(err.message || 'Failed to delete template')
+      return false
+    }
+  }, [])
+
+  const createProjectFromTemplate = useCallback(async (templateId, projectName, projectColor) => {
+    try {
+      const newProject = await applyTemplate(templateId, projectName, projectColor)
+      const normalized = normalizeProject(newProject)
+      setProjects((prev) => [...prev, normalized])
+      setActiveProjectId((prev) => prev ?? normalized.id)
+      setError('')
+      return normalized
+    } catch (err) {
+      setError(err.message || 'Failed to create project from template')
+      return null
+    }
+  }, [])
+
+  const loadRecurringTasks = useCallback(async (projectId) => {
+    try {
+      const data = await fetchRecurringTasks(projectId)
+      setRecurringTasks(data)
+      setError('')
+    } catch (err) {
+      setError(err.message || 'Failed to load recurring tasks')
+    }
+  }, [])
+
+  const addRecurringTask = useCallback(async (
+    projectId,
+    cardId,
+    recurrenceType,
+    recurrenceInterval = 1,
+    recurrenceStartDate = null,
+    recurrenceEndDate = null
+  ) => {
+    try {
+      const task = await createRecurringTask(
+        projectId,
+        cardId,
+        recurrenceType,
+        recurrenceInterval,
+        recurrenceStartDate,
+        recurrenceEndDate
+      )
+      setRecurringTasks((prev) => [...prev, task])
+      setError('')
+      return task
+    } catch (err) {
+      setError(err.message || 'Failed to create recurring task')
+      return null
+    }
+  }, [])
+
+  const updateRecurringTaskFn = useCallback(async (taskId, fields) => {
+    try {
+      const updated = await updateRecurringTask(taskId, fields)
+      setRecurringTasks((prev) =>
+        prev.map((task) => (task.id === taskId ? updated : task))
+      )
+      setError('')
+      return updated
+    } catch (err) {
+      setError(err.message || 'Failed to update recurring task')
+      return null
+    }
+  }, [])
+
+  const removeRecurringTask = useCallback(async (taskId) => {
+    try {
+      await deleteRecurringTask(taskId)
+      setRecurringTasks((prev) => prev.filter((t) => t.id !== taskId))
+      setError('')
+      return true
+    } catch (err) {
+      setError(err.message || 'Failed to delete recurring task')
+      return false
+    }
+  }, [])
+
+  const generateRecurringTask = useCallback(async (taskId) => {
+    try {
+      const newCard = await generateRecurringTaskInstance(taskId)
+      setError('')
+      return normalizeCard(newCard)
+    } catch (err) {
+      setError(err.message || 'Failed to generate recurring task')
+      return null
+    }
+  }, [])
+
+  const generateAllRecurring = useCallback(async (projectId) => {
+    try {
+      const newCards = await generateAllRecurringTasks(projectId)
+      setError('')
+      return newCards.map(normalizeCard)
+    } catch (err) {
+      setError(err.message || 'Failed to generate recurring tasks')
+      return []
+    }
+  }, [])
+
   return {
     projects,
     activeProjectId,
@@ -408,5 +553,19 @@ export default function useProjects() {
     removeCard,
     editCard,
     moveCard,
+    templates,
+    loadTemplates,
+    saveAsTemplate,
+    removeTemplate,
+    createProjectFromTemplate,
+    showTemplates,
+    setShowTemplates,
+    recurringTasks,
+    loadRecurringTasks,
+    addRecurringTask,
+    updateRecurringTask: updateRecurringTaskFn,
+    removeRecurringTask,
+    generateRecurringTask,
+    generateAllRecurring,
   }
 }

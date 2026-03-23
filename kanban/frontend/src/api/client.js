@@ -72,3 +72,77 @@ export async function updateCard(cardId, fields) {
 export async function deleteCard(cardId) {
   return request(`/cards/${cardId}`, { method: 'DELETE' })
 }
+
+// Templates API
+export async function fetchTemplates() {
+  return request('/templates', { method: 'GET' })
+}
+
+export async function createTemplate(name, description, color, wipLimits, cards) {
+  return request('/templates', {
+    method: 'POST',
+    body: JSON.stringify({ name, description, color, wip_limits: wipLimits, cards }),
+  })
+}
+
+export async function saveProjectAsTemplate(projectId, name, description) {
+  return request(`/projects/${projectId}/save-as-template`, {
+    method: 'POST',
+    body: JSON.stringify({ name, description }),
+  })
+}
+
+export async function deleteTemplate(templateId) {
+  return request(`/templates/${templateId}`, { method: 'DELETE' })
+}
+
+export async function applyTemplate(templateId, projectName, projectColor) {
+  return request(`/templates/${templateId}/apply`, {
+    method: 'POST',
+    body: JSON.stringify({ project_name: projectName, project_color: projectColor }),
+  })
+}
+
+// Recurring Tasks API
+export async function fetchRecurringTasks(projectId) {
+  return request(`/projects/${projectId}/recurring-tasks`, { method: 'GET' })
+}
+
+export async function createRecurringTask(
+  projectId,
+  cardId,
+  recurrenceType,
+  recurrenceInterval,
+  recurrenceStartDate,
+  recurrenceEndDate
+) {
+  return request(`/projects/${projectId}/recurring-tasks`, {
+    method: 'POST',
+    body: JSON.stringify({
+      card_id: cardId,
+      recurrence_type: recurrenceType,
+      recurrence_interval: recurrenceInterval,
+      recurrence_start_date: recurrenceStartDate,
+      recurrence_end_date: recurrenceEndDate,
+    }),
+  })
+}
+
+export async function updateRecurringTask(taskId, fields) {
+  return request(`/recurring-tasks/${taskId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(fields),
+  })
+}
+
+export async function deleteRecurringTask(taskId) {
+  return request(`/recurring-tasks/${taskId}`, { method: 'DELETE' })
+}
+
+export async function generateRecurringTaskInstance(taskId) {
+  return request(`/recurring-tasks/${taskId}/generate`, { method: 'POST' })
+}
+
+export async function generateAllRecurringTasks(projectId) {
+  return request(`/projects/${projectId}/recurring-tasks/generate-all`, { method: 'POST' })
+}

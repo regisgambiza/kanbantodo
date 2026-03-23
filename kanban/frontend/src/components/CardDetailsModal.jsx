@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 const PRIORITY_OPTIONS = ['low', 'medium', 'high', 'urgent']
+const RECURRENCE_TYPES = ['daily', 'weekly', 'monthly', 'yearly']
 
 function splitCommaValues(value) {
   return value
@@ -27,9 +28,16 @@ function formatCommentDate(value) {
 export default function CardDetailsModal({
   card,
   projectColor,
+  projectId,
   onClose,
   onSave,
   onDeleteCard,
+  addRecurringTask,
+  removeRecurringTask,
+  updateRecurringTask,
+  generateRecurringTask,
+  recurringTasks,
+  loadRecurringTasks,
 }) {
   const [title, setTitle] = useState(card.title || '')
   const [subtitle, setSubtitle] = useState(card.subtitle || '')
@@ -44,6 +52,11 @@ export default function CardDetailsModal({
   const [attachmentUrl, setAttachmentUrl] = useState('')
   const [busy, setBusy] = useState(false)
   const [localError, setLocalError] = useState('')
+  const [showRecurringForm, setShowRecurringForm] = useState(false)
+  const [recurrenceType, setRecurrenceType] = useState('weekly')
+  const [recurrenceInterval, setRecurrenceInterval] = useState(1)
+  const [recurrenceStartDate, setRecurrenceStartDate] = useState('')
+  const [recurrenceEndDate, setRecurrenceEndDate] = useState('')
 
   useEffect(() => {
     setTitle(card.title || '')
@@ -54,7 +67,10 @@ export default function CardDetailsModal({
     setLabelsInput((card.labels || []).join(', '))
     setAssigneesInput((card.assignees || []).join(', '))
     setLocalError('')
-  }, [card])
+    if (projectId) {
+      loadRecurringTasks(projectId)
+    }
+  }, [card, projectId, loadRecurringTasks])
 
   useEffect(() => {
     function onKeyDown(event) {
@@ -65,6 +81,8 @@ export default function CardDetailsModal({
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [onClose])
+
+  const cardRecurringTask = recurringTasks.find((task) => task.card_id === card.id)
 
   async function persist(fields) {
     setBusy(true)
@@ -173,6 +191,55 @@ export default function CardDetailsModal({
     }
   }
 
+  async function handleCreateRecurringTask(event) {
+    event.preventDefault()
+    if (!projectId) return
+
+    const result = await addRecurringTask(
+      projectId,
+      card.id,
+      recurrenceType,
+      recurrenceInterval,
+      recurrenceStartDate || null,
+      recurrenceEndDate || null
+    )
+
+    if (result) {
+      setShowRecurringForm(false)
+      setRecurrenceType('weekly')
+      setRecurrenceInterval(1)
+      setRecurrenceStartDate('')
+      setRecurrenceEndDate('')
+      loadRecurringTasks(projectId)
+    }
+  }
+
+  async function handleDeleteRecurringTask() {
+    if (!cardRecurringTask) return
+    const result = await removeRecurringTask(cardRecurringTask.id)
+    if (result && projectId) {
+      loadRecurringTasks(projectId)
+    }
+  }
+
+  async function handleGenerateRecurringInstance() {
+    if (!cardRecurringTask) return
+    const result = await generateRecurringTask(cardRecurringTask.id)
+    if (result && projectId) {
+      loadRecurringTasks(projectId)
+    }
+  }
+
+  async function handleToggleRecurringActive() {
+    if (!cardRecurringTask) return
+    const result = await updateRecurringTask(cardRecurringTask.id, {
+      active: !cardRecurringTask.active,
+    })
+    if (result && projectId) {
+      loadRecurringTasks(projectId)
+    }
+  }
+
   return (
     <div
       className="modal-overlay"
@@ -246,6 +313,122 @@ export default function CardDetailsModal({
             Save details
           </button>
         </form>
+
+        {cardRecurringTask && (
+          <section className="modal-section recurring-section">
+            <h3>🔄 Recurring Task</h3>
+            <div className="recurring-info">
+              <p>
+                <strong>Type:</strong> {cardRecurringTask.recurrence_type} (every{' '}
+                {cardRecurringTask.recurrence_interval})
+              </p>
+              {cardRecurringTask.next_due_date && (
+                <p>
+                  <strong>Next due:</strong> {cardRecurringTask.next_due_date}
+                </p>
+              )}
+              {cardRecurringTask.last_generated_date && (
+                <p>
+                  <strong>Last generated:</strong> {cardRecurringTask.last_generated_date}
+                </p>
+              )}
+              <p>
+                <strong>Status:</strong>{' '}
+                <span className={cardRecurringTask.active ? 'active' : 'inactive'}>
+                  {cardRecurringTask.active ? 'Active' : 'Inactive'}
+                </span>
+              </p>
+            </div>
+            <div className="recurring-actions">
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={handleToggleRecurringActive}
+              >
+                {cardRecurringTask.active ? 'Pause' : 'Resume'}
+              </button>
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={handleGenerateRecurringInstance}
+                disabled={!cardRecurringTask.active || !cardRecurringTask.next_due_date}
+              >
+                Generate Now
+              </button>
+              <button type="button" className="danger-btn" onClick={handleDeleteRecurringTask}>
+                Remove Recurrence
+              </button>
+            </div>
+          </section>
+        )}
+
+        {!cardRecurringTask && (
+          <section className="modal-section">
+            <h3>🔄 Recurring Task</h3>
+            {!showRecurringForm ? (
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() => setShowRecurringForm(true)}
+              >
+                + Make Recurring
+              </button>
+            ) : (
+              <form className="recurring-form" onSubmit={handleCreateRecurringTask}>
+                <div className="form-group">
+                  <label>Repeat</label>
+                  <select
+                    value={recurrenceType}
+                    onChange={(e) => setRecurrenceType(e.target.value)}
+                  >
+                    {RECURRENCE_TYPES.map((type) => (
+                      <option key={type} value={type}>
+                        {type}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Every</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={recurrenceInterval}
+                    onChange={(e) => setRecurrenceInterval(parseInt(e.target.value) || 1)}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Start date</label>
+                  <input
+                    type="date"
+                    value={recurrenceStartDate}
+                    onChange={(e) => setRecurrenceStartDate(e.target.value)}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>End date (optional)</label>
+                  <input
+                    type="date"
+                    value={recurrenceEndDate}
+                    onChange={(e) => setRecurrenceEndDate(e.target.value)}
+                  />
+                </div>
+                <div className="form-actions">
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    onClick={() => setShowRecurringForm(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button type="submit" className="btn-primary">
+                    Create Recurring Task
+                  </button>
+                </div>
+              </form>
+            )}
+          </section>
+        )}
 
         <section className="modal-section">
           <h3>Checklist</h3>

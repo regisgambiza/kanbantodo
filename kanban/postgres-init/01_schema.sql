@@ -38,6 +38,35 @@ CREATE INDEX IF NOT EXISTS idx_cards_project ON cards(project_id);
 CREATE INDEX IF NOT EXISTS idx_cards_col ON cards(col);
 CREATE INDEX IF NOT EXISTS idx_activity_project_created ON activity_log(project_id, created_at DESC);
 
+-- Project templates table
+CREATE TABLE IF NOT EXISTS project_templates (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL UNIQUE,
+    description TEXT DEFAULT '',
+    color VARCHAR(20) NOT NULL DEFAULT '#7F77DD',
+    wip_limits JSONB NOT NULL DEFAULT '{"backlog":4,"todo":3,"doing":3,"done":0}'::jsonb,
+    cards JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Recurring tasks configuration
+CREATE TABLE IF NOT EXISTS recurring_tasks (
+    id SERIAL PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+    recurrence_type VARCHAR(20) NOT NULL CHECK (recurrence_type IN ('daily', 'weekly', 'monthly', 'yearly')),
+    recurrence_interval INTEGER NOT NULL DEFAULT 1,
+    recurrence_start_date DATE,
+    recurrence_end_date DATE,
+    last_generated_date DATE,
+    next_due_date DATE,
+    active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_recurring_tasks_project ON recurring_tasks(project_id);
+CREATE INDEX IF NOT EXISTS idx_recurring_tasks_active ON recurring_tasks(active) WHERE active = true;
+
 -- Seed projects
 INSERT INTO projects (name, color) VALUES
   ('MathMind',    '#7F77DD'),

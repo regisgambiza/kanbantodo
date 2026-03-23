@@ -659,6 +659,686 @@ def delete_project(project_id):
     return "", 204
 
 
+# ============== Project Templates Endpoints ==============
+
+@app.get("/api/templates")
+def get_templates():
+    try:
+        templates = fetch_all(
+            """
+            SELECT id, name, description, color, wip_limits, cards, created_at
+            FROM project_templates
+            ORDER BY created_at ASC, id ASC
+            """
+        )
+    except psycopg2.Error:
+        return api_error("Database error while loading templates", 500)
+
+    return jsonify(templates)
+
+
+@app.post("/api/templates")
+def create_template():
+    data = request.get_json(silent=True) or {}
+    name = str(data.get("name", "")).strip()
+    description = str(data.get("description", "")).strip()
+    color = str(data.get("color", "#7F77DD")).strip() or "#7F77DD"
+
+    if not name:
+        return api_error("Template name is required")
+
+    try:
+        wip_limits = normalize_wip_limits(data.get("wip_limits"))
+    except ValueError as exc:
+        return api_error(str(exc))
+
+    cards = data.get("cards", [])
+    if not isinstance(cards, list):
+        return api_error("cards must be an array")
+
+    try:
+        with closing(get_connection()) as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                INSERT INTO project_templates (name, description, color, wip_limits, cards)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id, name, description, color, wip_limits, cards, created_at
+                """,
+                (name, description, color, Json(wip_limits), Json(cards)),
+            )
+            template = dict(cur.fetchone())
+    except psycopg2.Error as exc:
+        if "duplicate_key" in str(exc).lower():
+            return api_error("A template with this name already exists", 409)
+        return api_error("Database error while creating template", 500)
+
+    return jsonify(template), 201
+
+
+@app.post("/api/projects/<int:project_id>/save-as-template")
+def save_project_as_template(project_id):
+    data = request.get_json(silent=True) or {}
+    name = str(data.get("name", "")).strip()
+    description = str(data.get("description", "")).strip()
+
+    if not name:
+        return api_error("Template name is required")
+
+    actor = get_actor()
+
+    try:
+        with closing(get_connection()) as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT id, name, color, wip_limits
+                FROM projects
+                WHERE id = %s
+                """,
+                (project_id,),
+            )
+            project = cur.fetchone()
+            if not project:
+                return api_error("Project not found", 404)
+
+            cur.execute(
+                f"""
+                SELECT {CARD_SELECT_COLUMNS}
+                FROM cards
+                WHERE project_id = %s
+                ORDER BY col ASC, position ASC, id ASC
+                """,
+                (project_id,),
+            )
+            cards = []
+            for row in cur.fetchall():
+                card = dict(row)
+                # Convert date/datetime objects to strings for JSON serialization
+                if card.get("due_date"):
+                    card["due_date"] = str(card["due_date"])
+                if card.get("created_at"):
+                    card["created_at"] = str(card["created_at"])
+                cards.append(card)
+
+            template_name = name
+            base_name = name
+            counter = 1
+
+            while True:
+                cur.execute(
+                    "SELECT id FROM project_templates WHERE name = %s",
+                    (template_name,),
+                )
+                if not cur.fetchone():
+                    break
+                template_name = f"{base_name} ({counter})"
+                counter += 1
+
+            cur.execute(
+                """
+                INSERT INTO project_templates (name, description, color, wip_limits, cards)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id, name, description, color, wip_limits, cards, created_at
+                """,
+                (template_name, description, project["color"], Json(project["wip_limits"]), Json(cards)),
+            )
+            template = dict(cur.fetchone())
+
+            log_activity(
+                project_id=project_id,
+                card_id=None,
+                actor=actor,
+                action="template_created",
+                details={"template_name": template["name"], "source_project": project["name"]},
+                cur=cur,
+            )
+    except psycopg2.Error as exc:
+        return api_error("Database error while saving template", 500)
+
+    return jsonify(template), 201
+
+
+@app.delete("/api/templates/<int:template_id>")
+def delete_template(template_id):
+    try:
+        deleted = execute("DELETE FROM project_templates WHERE id = %s", (template_id,))
+    except psycopg2.Error:
+        return api_error("Database error while deleting template", 500)
+
+    if deleted == 0:
+        return api_error("Template not found", 404)
+
+    return "", 204
+
+
+@app.post("/api/templates/<int:template_id>/apply")
+def apply_template(template_id):
+    data = request.get_json(silent=True) or {}
+    project_name = str(data.get("project_name", "")).strip()
+    project_color = str(data.get("project_color", "#7F77DD")).strip() or "#7F77DD"
+    actor = get_actor()
+
+    try:
+        with closing(get_connection()) as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT id, name, description, color, wip_limits, cards
+                FROM project_templates
+                WHERE id = %s
+                """,
+                (template_id,),
+            )
+            template = cur.fetchone()
+            if not template:
+                return api_error("Template not found", 404)
+
+            final_project_name = project_name or f"{template['name']} Project"
+
+            cards_data = template["cards"]
+            if isinstance(cards_data, str):
+                import json
+                cards_data = json.loads(cards_data)
+
+            cur.execute(
+                """
+                INSERT INTO projects (name, color, wip_limits)
+                VALUES (%s, %s, %s)
+                RETURNING id, name, color, wip_limits, created_at
+                """,
+                (final_project_name, project_color, Json(template["wip_limits"])),
+            )
+            new_project = dict(cur.fetchone())
+
+            cards_by_col = {}
+            for card in cards_data:
+                col = card.get("col", "backlog")
+                if col not in cards_by_col:
+                    cards_by_col[col] = []
+                cards_by_col[col].append(card)
+
+            for col in COLUMN_ORDER:
+                col_cards = cards_by_col.get(col, [])
+                for position, card in enumerate(col_cards):
+                    cur.execute(
+                        f"""
+                        INSERT INTO cards (
+                            project_id, col, title, subtitle, description, due_date, priority,
+                            labels, assignees, checklist, comments, attachments, position
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING {CARD_SELECT_COLUMNS}
+                        """,
+                        (
+                            new_project["id"],
+                            col,
+                            card.get("title", ""),
+                            card.get("subtitle", ""),
+                            card.get("description", ""),
+                            card.get("due_date"),
+                            card.get("priority", "medium"),
+                            card.get("labels", []),
+                            card.get("assignees", []),
+                            Json(card.get("checklist", [])),
+                            Json(card.get("comments", [])),
+                            Json(card.get("attachments", [])),
+                            position,
+                        ),
+                    )
+
+            log_activity(
+                project_id=new_project["id"],
+                card_id=None,
+                actor=actor,
+                action="project_created_from_template",
+                details={"project_name": new_project["name"], "template_name": template["name"]},
+                cur=cur,
+            )
+
+            cur.execute(
+                f"""
+                SELECT {CARD_SELECT_COLUMNS}
+                FROM cards
+                WHERE project_id = %s
+                ORDER BY col ASC, position ASC, id ASC
+                """,
+                (new_project["id"],),
+            )
+            new_project["cards"] = [dict(row) for row in cur.fetchall()]
+    except psycopg2.Error as exc:
+        return api_error("Database error while applying template", 500)
+
+    return jsonify(new_project), 201
+
+
+# ============== Recurring Tasks Endpoints ==============
+
+@app.get("/api/projects/<int:project_id>/recurring-tasks")
+def get_recurring_tasks(project_id):
+    try:
+        with closing(get_connection()) as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT id, project_id, card_id, recurrence_type, recurrence_interval,
+                       recurrence_start_date::text AS recurrence_start_date,
+                       recurrence_end_date::text AS recurrence_end_date,
+                       last_generated_date::text AS last_generated_date,
+                       next_due_date::text AS next_due_date,
+                       active, created_at
+                FROM recurring_tasks
+                WHERE project_id = %s
+                ORDER BY created_at ASC, id ASC
+                """,
+                (project_id,),
+            )
+            recurring_tasks = [dict(row) for row in cur.fetchall()]
+    except psycopg2.Error:
+        return api_error("Database error while loading recurring tasks", 500)
+
+    return jsonify(recurring_tasks)
+
+
+@app.post("/api/projects/<int:project_id>/recurring-tasks")
+def create_recurring_task(project_id):
+    data = request.get_json(silent=True) or {}
+    card_id = data.get("card_id")
+    recurrence_type = data.get("recurrence_type")
+    recurrence_interval = data.get("recurrence_interval", 1)
+    recurrence_start_date = data.get("recurrence_start_date")
+    recurrence_end_date = data.get("recurrence_end_date")
+    actor = get_actor()
+
+    if not card_id:
+        return api_error("card_id is required")
+    if recurrence_type not in {"daily", "weekly", "monthly", "yearly"}:
+        return api_error("recurrence_type must be one of: daily, weekly, monthly, yearly")
+
+    try:
+        recurrence_interval = int(recurrence_interval)
+        if recurrence_interval < 1:
+            return api_error("recurrence_interval must be >= 1")
+    except (TypeError, ValueError):
+        return api_error("recurrence_interval must be an integer")
+
+    try:
+        with closing(get_connection()) as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT id FROM projects WHERE id = %s",
+                (project_id,),
+            )
+            if not cur.fetchone():
+                return api_error("Project not found", 404)
+
+            cur.execute(
+                "SELECT id, title, due_date FROM cards WHERE id = %s AND project_id = %s",
+                (card_id, project_id),
+            )
+            card = cur.fetchone()
+            if not card:
+                return api_error("Card not found", 404)
+
+            next_due = None
+            if recurrence_start_date:
+                try:
+                    next_due = date.fromisoformat(recurrence_start_date)
+                except ValueError:
+                    return api_error("recurrence_start_date must be YYYY-MM-DD")
+            elif card["due_date"]:
+                try:
+                    next_due = date.fromisoformat(str(card["due_date"]))
+                except ValueError:
+                    pass
+
+            cur.execute(
+                """
+                INSERT INTO recurring_tasks (
+                    project_id, card_id, recurrence_type, recurrence_interval,
+                    recurrence_start_date, recurrence_end_date, next_due_date
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, project_id, card_id, recurrence_type, recurrence_interval,
+                          recurrence_start_date::text AS recurrence_start_date,
+                          recurrence_end_date::text AS recurrence_end_date,
+                          last_generated_date::text AS last_generated_date,
+                          next_due_date::text AS next_due_date,
+                          active, created_at
+                """,
+                (
+                    project_id,
+                    card_id,
+                    recurrence_type,
+                    recurrence_interval,
+                    recurrence_start_date,
+                    recurrence_end_date,
+                    next_due,
+                ),
+            )
+            recurring_task = dict(cur.fetchone())
+
+            log_activity(
+                project_id=project_id,
+                card_id=card_id,
+                actor=actor,
+                action="recurring_task_created",
+                details={"recurrence_type": recurrence_type, "interval": recurrence_interval},
+                cur=cur,
+            )
+    except psycopg2.Error:
+        return api_error("Database error while creating recurring task", 500)
+
+    return jsonify(recurring_task), 201
+
+
+@app.patch("/api/recurring-tasks/<int:task_id>")
+def update_recurring_task(task_id):
+    data = request.get_json(silent=True) or {}
+    actor = get_actor()
+
+    fields = []
+    params = []
+
+    if "active" in data:
+        fields.append("active = %s")
+        params.append(bool(data["active"]))
+
+    if "recurrence_interval" in data:
+        try:
+            interval = int(data["recurrence_interval"])
+            if interval < 1:
+                return api_error("recurrence_interval must be >= 1")
+            fields.append("recurrence_interval = %s")
+            params.append(interval)
+        except (TypeError, ValueError):
+            return api_error("recurrence_interval must be an integer")
+
+    if "recurrence_end_date" in data:
+        fields.append("recurrence_end_date = %s")
+        params.append(data["recurrence_end_date"] if data["recurrence_end_date"] else None)
+
+    if not fields:
+        return api_error("No valid fields provided")
+
+    params.append(task_id)
+
+    try:
+        with closing(get_connection()) as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                f"""
+                UPDATE recurring_tasks
+                SET {", ".join(fields)}
+                WHERE id = %s
+                RETURNING id, project_id, card_id, recurrence_type, recurrence_interval,
+                          recurrence_start_date::text AS recurrence_start_date,
+                          recurrence_end_date::text AS recurrence_end_date,
+                          last_generated_date::text AS last_generated_date,
+                          next_due_date::text AS next_due_date,
+                          active, created_at
+                """,
+                params,
+            )
+            updated = cur.fetchone()
+            if not updated:
+                return api_error("Recurring task not found", 404)
+
+            log_activity(
+                project_id=updated["project_id"],
+                card_id=updated["card_id"],
+                actor=actor,
+                action="recurring_task_updated",
+                details={"fields": fields},
+                cur=cur,
+            )
+    except psycopg2.Error:
+        return api_error("Database error while updating recurring task", 500)
+
+    return jsonify(dict(updated))
+
+
+@app.delete("/api/recurring-tasks/<int:task_id>")
+def delete_recurring_task(task_id):
+    actor = get_actor()
+
+    try:
+        with closing(get_connection()) as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT project_id, card_id FROM recurring_tasks WHERE id = %s",
+                (task_id,),
+            )
+            task = cur.fetchone()
+            if not task:
+                return api_error("Recurring task not found", 404)
+
+            cur.execute("DELETE FROM recurring_tasks WHERE id = %s", (task_id,))
+
+            log_activity(
+                project_id=task["project_id"],
+                card_id=task["card_id"],
+                actor=actor,
+                action="recurring_task_deleted",
+                details={"recurring_task_id": task_id},
+                cur=cur,
+            )
+    except psycopg2.Error:
+        return api_error("Database error while deleting recurring task", 500)
+
+    return "", 204
+
+
+@app.post("/api/recurring-tasks/<int:task_id>/generate")
+def generate_recurring_task_instance(task_id):
+    actor = get_actor()
+
+    try:
+        with closing(get_connection()) as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT rt.*, c.title, c.subtitle, c.description, c.priority,
+                       c.labels, c.assignees, c.checklist, c.comments, c.attachments,
+                       c.col
+                FROM recurring_tasks rt
+                JOIN cards c ON rt.card_id = c.id
+                WHERE rt.id = %s
+                """,
+                (task_id,),
+            )
+            recurring_task = cur.fetchone()
+            if not recurring_task:
+                return api_error("Recurring task not found", 404)
+
+            if not recurring_task["active"]:
+                return api_error("Recurring task is not active", 400)
+
+            if not recurring_task["next_due_date"]:
+                return api_error("No next_due_date set for recurring task", 400)
+
+            new_due_date = recurring_task["next_due_date"]
+
+            cur.execute(
+                f"""
+                INSERT INTO cards (
+                    project_id, col, title, subtitle, description, due_date, priority,
+                    labels, assignees, checklist, comments, attachments, position
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING {CARD_SELECT_COLUMNS}
+                """,
+                (
+                    recurring_task["project_id"],
+                    recurring_task["col"],
+                    recurring_task["title"],
+                    recurring_task["subtitle"],
+                    recurring_task["description"],
+                    new_due_date,
+                    recurring_task["priority"],
+                    recurring_task["labels"],
+                    recurring_task["assignees"],
+                    Json(recurring_task["checklist"]),
+                    Json(recurring_task["comments"]),
+                    Json(recurring_task["attachments"]),
+                    0,
+                ),
+            )
+            new_card = dict(cur.fetchone())
+
+            from datetime import timedelta
+
+            recurrence_type = recurring_task["recurrence_type"]
+            interval = recurring_task["recurrence_interval"]
+            current_next_due = recurring_task["next_due_date"]
+
+            if recurrence_type == "daily":
+                new_next_due = current_next_due + timedelta(days=interval)
+            elif recurrence_type == "weekly":
+                new_next_due = current_next_due + timedelta(weeks=interval)
+            elif recurrence_type == "monthly":
+                new_month = current_next_due.month + interval
+                new_year = current_next_due.year + (new_month - 1) // 12
+                new_month = ((new_month - 1) % 12) + 1
+                try:
+                    new_next_due = current_next_due.replace(year=new_year, month=new_month)
+                except ValueError:
+                    new_next_due = current_next_due.replace(year=new_year, month=new_month, day=1)
+            elif recurrence_type == "yearly":
+                try:
+                    new_next_due = current_next_due.replace(year=current_next_due.year + interval)
+                except ValueError:
+                    new_next_due = current_next_due.replace(year=current_next_due.year + interval, day=1)
+            else:
+                new_next_due = None
+
+            cur.execute(
+                """
+                UPDATE recurring_tasks
+                SET last_generated_date = %s, next_due_date = %s
+                WHERE id = %s
+                """,
+                (new_due_date, new_next_due, task_id),
+            )
+
+            log_activity(
+                project_id=recurring_task["project_id"],
+                card_id=new_card["id"],
+                actor=actor,
+                action="recurring_task_instance_generated",
+                details={
+                    "recurring_task_id": task_id,
+                    "new_card_id": new_card["id"],
+                    "due_date": str(new_due_date),
+                },
+                cur=cur,
+            )
+    except psycopg2.Error as exc:
+        return api_error("Database error while generating recurring task instance", 500)
+
+    return jsonify(new_card), 201
+
+
+@app.post("/api/projects/<int:project_id>/recurring-tasks/generate-all")
+def generate_all_recurring_tasks(project_id):
+    actor = get_actor()
+
+    try:
+        with closing(get_connection()) as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT id FROM projects WHERE id = %s", (project_id,))
+            if not cur.fetchone():
+                return api_error("Project not found", 404)
+
+            cur.execute(
+                """
+                SELECT rt.*, c.title, c.subtitle, c.description, c.priority,
+                       c.labels, c.assignees, c.checklist, c.comments, c.attachments,
+                       c.col
+                FROM recurring_tasks rt
+                JOIN cards c ON rt.card_id = c.id
+                WHERE rt.project_id = %s AND rt.active = true AND rt.next_due_date IS NOT NULL
+                """,
+                (project_id,),
+            )
+            recurring_tasks = cur.fetchall()
+
+            from datetime import timedelta
+
+            new_cards = []
+            for recurring_task in recurring_tasks:
+                new_due_date = recurring_task["next_due_date"]
+
+                cur.execute(
+                    f"""
+                    INSERT INTO cards (
+                        project_id, col, title, subtitle, description, due_date, priority,
+                        labels, assignees, checklist, comments, attachments, position
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING {CARD_SELECT_COLUMNS}
+                    """,
+                    (
+                        recurring_task["project_id"],
+                        recurring_task["col"],
+                        recurring_task["title"],
+                        recurring_task["subtitle"],
+                        recurring_task["description"],
+                        new_due_date,
+                        recurring_task["priority"],
+                        recurring_task["labels"],
+                        recurring_task["assignees"],
+                        Json(recurring_task["checklist"]),
+                        Json(recurring_task["comments"]),
+                        Json(recurring_task["attachments"]),
+                        0,
+                    ),
+                )
+                new_card = dict(cur.fetchone())
+                new_cards.append(new_card)
+
+                recurrence_type = recurring_task["recurrence_type"]
+                interval = recurring_task["recurrence_interval"]
+                current_next_due = recurring_task["next_due_date"]
+
+                if recurrence_type == "daily":
+                    new_next_due = current_next_due + timedelta(days=interval)
+                elif recurrence_type == "weekly":
+                    new_next_due = current_next_due + timedelta(weeks=interval)
+                elif recurrence_type == "monthly":
+                    new_month = current_next_due.month + interval
+                    new_year = current_next_due.year + (new_month - 1) // 12
+                    new_month = ((new_month - 1) % 12) + 1
+                    try:
+                        new_next_due = current_next_due.replace(year=new_year, month=new_month)
+                    except ValueError:
+                        new_next_due = current_next_due.replace(year=new_year, month=new_month, day=1)
+                elif recurrence_type == "yearly":
+                    try:
+                        new_next_due = current_next_due.replace(year=current_next_due.year + interval)
+                    except ValueError:
+                        new_next_due = current_next_due.replace(year=current_next_due.year + interval, day=1)
+                else:
+                    new_next_due = None
+
+                cur.execute(
+                    """
+                    UPDATE recurring_tasks
+                    SET last_generated_date = %s, next_due_date = %s
+                    WHERE id = %s
+                    """,
+                    (new_due_date, new_next_due, recurring_task["id"]),
+                )
+
+                log_activity(
+                    project_id=recurring_task["project_id"],
+                    card_id=new_card["id"],
+                    actor=actor,
+                    action="recurring_task_instance_generated",
+                    details={
+                        "recurring_task_id": recurring_task["id"],
+                        "new_card_id": new_card["id"],
+                        "due_date": str(new_due_date),
+                    },
+                    cur=cur,
+                )
+    except psycopg2.Error:
+        return api_error("Database error while generating recurring tasks", 500)
+
+    return jsonify(new_cards), 201
+
+
 @app.post("/api/projects/<int:project_id>/cards")
 def create_card(project_id):
     data = request.get_json(silent=True) or {}

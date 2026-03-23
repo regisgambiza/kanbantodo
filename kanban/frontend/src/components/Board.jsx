@@ -31,6 +31,12 @@ export default function Board({
   moveCard,
   removeProject,
   editCard,
+  addRecurringTask,
+  removeRecurringTask,
+  updateRecurringTask,
+  generateRecurringTask,
+  recurringTasks,
+  loadRecurringTasks,
 }) {
   const [selectedCardId, setSelectedCardId] = useState(null)
   const [search, setSearch] = useState('')
@@ -290,9 +296,16 @@ export default function Board({
         <CardDetailsModal
           card={selectedCard}
           projectColor={project.color}
+          projectId={project.id}
           onClose={() => setSelectedCardId(null)}
           onSave={handleSaveCard}
           onDeleteCard={handleDeleteCard}
+          addRecurringTask={addRecurringTask}
+          removeRecurringTask={removeRecurringTask}
+          updateRecurringTask={updateRecurringTask}
+          generateRecurringTask={generateRecurringTask}
+          recurringTasks={recurringTasks}
+          loadRecurringTasks={loadRecurringTasks}
         />
       )}
     </div>

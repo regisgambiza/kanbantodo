@@ -48,6 +48,64 @@ body {
   background: var(--panel-bg);
 }
 
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  gap: 4px;
+}
+
+.nav-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+  text-align: left;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.nav-btn:hover {
+  background: var(--hover);
+}
+
+.nav-btn.active {
+  background: var(--active);
+  font-weight: 600;
+}
+
+.nav-icon {
+  font-size: 16px;
+}
+
+.nav-label {
+  flex: 1;
+}
+
+.nav-count {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #e0ddd8;
+  color: #666259;
+  font-weight: 600;
+}
+
+.nav-btn.active .nav-count {
+  background: #d0ccc4;
+}
+
+.sidebar-divider {
+  height: 1px;
+  background: #d8d4ce;
+  margin: 8px 12px;
+}
+
 .sidebar-header {
   padding: 16px 14px 12px;
   font-size: 13px;
@@ -678,6 +736,142 @@ body {
   display: flex;
   justify-content: flex-end;
   padding: 12px 14px;
+}
+
+/* ── TODAY / UPCOMING / ALL PROJECTS VIEWS ──────────── */
+.view-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.view-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.view-icon {
+  font-size: 24px;
+}
+
+.view-title-wrap h1 {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1;
+}
+
+.view-stats {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 13px;
+}
+
+.view-toolbar {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.view-toolbar .filter-input {
+  width: 100%;
+}
+
+.view-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 14px 16px;
+}
+
+.tasks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.task-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #e4e1db;
+  border-left: 3px solid;
+  border-radius: 8px;
+  background: var(--card-bg);
+  cursor: pointer;
+  transition: background-color 0.12s ease, box-shadow 0.12s ease;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+
+.task-list-item:hover {
+  background: #fafaf9;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+}
+
+.task-list-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.task-project-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.task-list-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.task-list-title {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text);
+}
+
+.task-list-subtitle {
+  font-size: 13px;
+  color: #5a5751;
+  line-height: 1.2;
+}
+
+.task-list-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.task-list-project {
+  font-size: 12px;
+  color: #666259;
+  padding: 2px 8px;
+  background: #f0ede8;
+  border-radius: 999px;
+}
+
+.due-date-badge {
+  font-size: 11px;
+  padding: 2px 7px;
+  background: #e4edf8;
+  color: #4a6b8a;
+  border-radius: 999px;
+  font-weight: 600;
 }
 
 /* ── RESPONSIVE ──────────────────────────────────────── */

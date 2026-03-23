@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react'
-import CardDetailsModal from './CardDetailsModal.jsx'
 import Column from './Column.jsx'
 
 const COLUMNS = [
@@ -37,16 +36,14 @@ export default function Board({
   generateRecurringTask,
   recurringTasks,
   loadRecurringTasks,
+  openCardDetails,
 }) {
-  const [selectedCardId, setSelectedCardId] = useState(null)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [priorityFilter, setPriorityFilter] = useState('all')
   const [labelFilter, setLabelFilter] = useState('all')
   const [assigneeFilter, setAssigneeFilter] = useState('all')
   const [dueFilter, setDueFilter] = useState('all')
-
-  const selectedCard = project.cards.find((card) => card.id === selectedCardId) || null
 
   const totalTasks = project.cards.length
   const doneCount = project.cards.filter((card) => card.col === 'done').length
@@ -172,19 +169,6 @@ export default function Board({
     await removeProject(project.id)
   }
 
-  async function handleSaveCard(fields) {
-    if (!selectedCard) return null
-    return editCard(project.id, selectedCard.id, fields)
-  }
-
-  async function handleDeleteCard(cardId) {
-    const removed = await removeCard(project.id, cardId)
-    if (removed) {
-      setSelectedCardId(null)
-    }
-    return removed
-  }
-
   return (
     <div className="board">
       <header className="board-header">
@@ -284,30 +268,13 @@ export default function Board({
               addCard={addCard}
               removeCard={removeCard}
               moveCard={moveCard}
-              openCardDetails={(card) => setSelectedCardId(card.id)}
+              openCardDetails={openCardDetails}
               taskCount={allCardsByColumn[column.id].length}
               filtersActive={Boolean(filtersActive)}
             />
           ))}
         </div>
       </div>
-
-      {selectedCard && (
-        <CardDetailsModal
-          card={selectedCard}
-          projectColor={project.color}
-          projectId={project.id}
-          onClose={() => setSelectedCardId(null)}
-          onSave={handleSaveCard}
-          onDeleteCard={handleDeleteCard}
-          addRecurringTask={addRecurringTask}
-          removeRecurringTask={removeRecurringTask}
-          updateRecurringTask={updateRecurringTask}
-          generateRecurringTask={generateRecurringTask}
-          recurringTasks={recurringTasks}
-          loadRecurringTasks={loadRecurringTasks}
-        />
-      )}
     </div>
   )
 }

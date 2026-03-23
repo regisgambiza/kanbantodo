@@ -6,6 +6,44 @@ function projectCounts(cards) {
   return { done, total: cards.length }
 }
 
+function countTodayTasks(projects) {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  let count = 0
+  for (const project of projects) {
+    for (const card of project.cards || []) {
+      if (card.due_date) {
+        const dueDate = new Date(card.due_date)
+        dueDate.setHours(0, 0, 0, 0)
+        if (dueDate.getTime() === today.getTime()) {
+          count++
+        }
+      }
+    }
+  }
+  return count
+}
+
+function countUpcomingTasks(projects) {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const nextWeek = new Date(today)
+  nextWeek.setDate(nextWeek.getDate() + 7)
+  let count = 0
+  for (const project of projects) {
+    for (const card of project.cards || []) {
+      if (card.due_date) {
+        const dueDate = new Date(card.due_date)
+        dueDate.setHours(0, 0, 0, 0)
+        if (dueDate >= today && dueDate <= nextWeek) {
+          count++
+        }
+      }
+    }
+  }
+  return count
+}
+
 export default function Sidebar({
   projects,
   activeProjectId,
@@ -20,6 +58,8 @@ export default function Sidebar({
   showTemplates,
   setShowTemplates,
   generateAllRecurring,
+  activeView,
+  setActiveView,
 }) {
   const [showForm, setShowForm] = useState(false)
   const [showSaveTemplate, setShowSaveTemplate] = useState(false)
@@ -36,6 +76,7 @@ export default function Sidebar({
     const created = await addProject(name, color)
     if (created) {
       setActiveProjectId(created.id)
+      setActiveView('project')
       setShowForm(false)
     }
   }
@@ -60,6 +101,7 @@ export default function Sidebar({
     const newProject = await createProjectFromTemplate(template.id, template.name + ' Project', template.color)
     if (newProject) {
       setActiveProjectId(newProject.id)
+      setActiveView('project')
       setShowTemplates(false)
     }
   }
@@ -76,24 +118,63 @@ export default function Sidebar({
   }
 
   const activeProject = projects.find((p) => p.id === activeProjectId)
+  const todayCount = countTodayTasks(projects)
+  const upcomingCount = countUpcomingTasks(projects)
+  const totalTasks = projects.reduce((sum, p) => sum + (p.cards || []).length, 0)
 
   return (
     <aside className="sidebar">
+      <div className="sidebar-nav">
+        <button
+          type="button"
+          className={`nav-btn ${activeView === 'today' ? 'active' : ''}`}
+          onClick={() => setActiveView('today')}
+        >
+          <span className="nav-icon">📅</span>
+          <span className="nav-label">Today</span>
+          {todayCount > 0 && <span className="nav-count">{todayCount}</span>}
+        </button>
+        <button
+          type="button"
+          className={`nav-btn ${activeView === 'upcoming' ? 'active' : ''}`}
+          onClick={() => setActiveView('upcoming')}
+        >
+          <span className="nav-icon">📆</span>
+          <span className="nav-label">Upcoming</span>
+          {upcomingCount > 0 && <span className="nav-count">{upcomingCount}</span>}
+        </button>
+        <button
+          type="button"
+          className={`nav-btn ${activeView === 'all' ? 'active' : ''}`}
+          onClick={() => setActiveView('all')}
+        >
+          <span className="nav-icon">📊</span>
+          <span className="nav-label">All Projects</span>
+          <span className="nav-count">{totalTasks}</span>
+        </button>
+      </div>
+
+      <div className="sidebar-divider"></div>
+
       <div className="sidebar-header">Projects</div>
       <div className="project-list">
         {projects.map((project) => {
           const counts = projectCounts(project.cards || [])
-          const isActive = project.id === activeProjectId
+          const isActive = project.id === activeProjectId && activeView === 'project'
           return (
             <div
               key={project.id}
               className={`project-row ${isActive ? 'active' : ''}`}
-              onClick={() => setActiveProjectId(project.id)}
+              onClick={() => {
+                setActiveProjectId(project.id)
+                setActiveView('project')
+              }}
               role="button"
               tabIndex={0}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') {
                   setActiveProjectId(project.id)
+                  setActiveView('project')
                 }
               }}
             >
@@ -132,7 +213,7 @@ export default function Sidebar({
             type="button"
             className="sidebar-action-btn"
             onClick={handleGenerateRecurring}
-            disabled={!activeProjectId}
+            disabled={!activeProjectId || activeView !== 'project'}
           >
             🔄 Generate
           </button>
@@ -140,7 +221,7 @@ export default function Sidebar({
             type="button"
             className="sidebar-action-btn"
             onClick={() => setShowSaveTemplate(true)}
-            disabled={!activeProjectId}
+            disabled={!activeProjectId || activeView !== 'project'}
           >
             💾 Save as Template
           </button>
